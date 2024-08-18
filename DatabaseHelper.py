@@ -61,6 +61,7 @@ class MyDB:
             CREATE TABLE IF NOT EXISTS "Run_Task_Record" (
                 id INTEGER PRIMARY KEY autoincrement,         -- '主键',
                 video_file_id INTEGER,   -- '外键  对应的vidoe文件的id
+                output_video_file_id INTEGER,
                 cmd TEXT,                   -- ' 命令内容
                 start_running_time INTEGER, -- ' 开始运行时间
                 end_running_time INTEGER,   --   结束运行时间
@@ -133,15 +134,16 @@ class MyDB:
 
 
 
-    def insert_video_file_state(self, conn, task):
+    def insert_video_file_state(self, conn, info_and_sha256):
         """
-        每次运行task时  会记录运行的cmd 就会附带上 运行的文件信息 file state
+        1. 每次运行task时  会记录运行的cmd 就会附带上 运行的文件信息 file state
+        2. 运行结束时 会把输出的video 信息再记录一遍
         :param conn:
         :param task:
         :return:
         """
-        state = task['v_info']
-        sha256_str = task['sha256']
+        state = info_and_sha256['v_info']
+        sha256_str = info_and_sha256['sha256']
         cursor = conn.cursor()
         cursor.execute(f'''
             insert into "Video_File_State" (
@@ -169,6 +171,7 @@ class MyDB:
               state['video_width'], state['video_height'], state['video_pix_fmt'], state['video_bit_rate'],
               state['video_fps'], state['audio_codec'], state['audio_sample_rate'],state['audio_bit_rate'] )
         )
+        conn.commit()
         video_file_id = cursor.lastrowid
         return video_file_id
 
@@ -190,7 +193,7 @@ class MyDB:
         conn.commit()
         return cursor.lastrowid
 
-    def record_end_run(self, conn, run_record_id, has_error):
+    def record_end_run(self, conn, run_record_id, has_error, out_vfile_id):
         """
         记录 视频文件 的cmd 运行结果
         """
@@ -199,9 +202,10 @@ class MyDB:
             update "Run_Task_Record"  
             set
                 output_has_error =?,
-                end_running_time = ?   
+                end_running_time = ?,
+                output_video_file_id = ?
             where  id=? 
-        ''', (has_error, int(time.time()), run_record_id ))
+        ''', (has_error, int(time.time()), out_vfile_id, run_record_id ))
         conn.commit()
 
 

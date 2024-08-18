@@ -97,7 +97,6 @@ class FFmpegManager(TerminalOutput, FFmpegUtil):
 
     def run(self, db, file_path_list, output_dir, running_output_dir, global_quality=24, ):
         conn = db.get_conn()
-        # file_path_sha256_list = db.pick_file_notexists_in_db(conn, file_path_list)
         ready_task_queue = FFmpegUtil.ffmpeg_video_to_av1_task_queue_init(
             file_path_list, output_dir, global_quality, running_output_dir
         )
@@ -197,8 +196,17 @@ class FFmpegManager(TerminalOutput, FFmpegUtil):
                         continue
                     retcode = process_info['process'].poll()
                     if retcode is not None:
+                        out_vfile_id = None
+                        if process_info["output_has_error"] == False: # 运行中 没有发生错误: 获取并记录 输出视频的 基本信息
+                            output_video_path = process_info['task']['dstfile_path']
+                            out_vinfo = FFmpegUtil.ffmpeg_video_info(output_video_path)
+                            out_vfile_id = db.insert_video_file_state(conn, {
+                                "v_info": out_vinfo,
+                                "sha256": FFmpegUtil.cal_sample_sha256(output_video_path)
+                            })
+
                         # 记录运行是否成功
-                        db.record_end_run(conn, process_info['run_record_id'], process_info["output_has_error"])
+                        db.record_end_run(conn, process_info['run_record_id'], process_info["output_has_error"], out_vfile_id)
 
                         self.print_to_area(f"{process_info['task']['file_path']} is exited, ret code:{retcode}, has_error:{process_info['output_has_error']}")
                         done_process_list.append({
@@ -240,6 +248,7 @@ def read_config(config_path):
     return config
 
 
+# TODO 运行任务前 计算所需空间大小 检测是否足够空间
 if __name__ == "__main__":
     config = read_config(os.path.join(".", "config.ini"))
     max_processes = config.getint("Input", "max_processes")

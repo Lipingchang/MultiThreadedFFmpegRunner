@@ -5,10 +5,47 @@ import queue
 import traceback
 import pandas
 import re
+import hashlib
+import time
 
 class FFmpegUtil:
     def __init__(self):
         pass
+
+    @staticmethod
+    def cal_sample_sha256(file_path):
+        # 快速的计算一个大文件的sha256 值。
+        # 注意！不是正确的 全文件的sha256
+        # 根据文件的首尾和中间的若干块计算一个近似的SHA256值。
+        # 当文件块数小于 3*每次取样个数 时候，会重复计算！
+
+        sha256 = hashlib.sha256()
+        file_size = os.path.getsize(file_path)
+        block_size = 64 * 8 # hash每次处理的块大小是512字节 但看网上有把65535字节放入update中的
+        samples_count = 300 # 在每个取样点 读取count个block
+        block_num = file_size // block_size     # 文件包含了block_num个block
+        # 三个取样点 开始的block的下标
+        start_block = 0
+        end_block = block_num -samples_count
+        middle_block = block_num // 2
+        with open(file_path, 'rb') as file:
+            file.seek(start_block*block_size, 0)
+            for _ in range(samples_count):
+                block = file.read(block_size)
+                sha256.update(block)
+            file.seek(middle_block*block_size, 0)
+            for _ in range(samples_count):
+                block = file.read(block_size)
+                sha256.update(block)
+            file.seek(end_block*block_size, 0)
+            for _ in range(samples_count):
+                block = file.read(block_size)
+                sha256.update(block)
+
+        return sha256.hexdigest()
+
+
+
 
     @staticmethod
     def ffmpeg_video_info(input_file_path, debug=False):
@@ -90,7 +127,10 @@ class FFmpegUtil:
             return 0
 
     @staticmethod
-    def ffmpeg_video_to_av1_task_queue_init(file_path_list, output_dir, global_quality):
+    def ffmpeg_video_to_av1_task_queue_init(file_path_list, output_dir, global_quality, running_output_dir):
+        # file_path_list = [x['file_path'] for x in file_path_sha256_list]
+        # file_sha256_list = [x['sha256'] for x in file_path_sha256_list]
+
         # 初始化ffmpeg任务队列
         # 每一个原视频文件生成一条转换格式的 cmd命令
         v_info_list = [
@@ -113,15 +153,21 @@ class FFmpegUtil:
             '-look_ahead', '1', '-c:a', 'copy',
             dstfile_path_list[i], '-y'
         ] for i in range(len(file_path_list))] # ffmepg命令列表
-        task_queue = queue.Queue()  # 任务队列
+        running_output_path_list = [
+            os.path.join(running_output_dir, f"{os.path.basename(p)}_{time.time()}.txt")
+            for p in dstfile_path_list
+        ]
 
+        task_queue = queue.Queue()  # 任务队列
         for i, file_path in enumerate(file_path_list):
             task_queue.put({
                 'file_path': file_path,
                 'duration': duration_list[i],
                 'dstfile_path': dstfile_path_list[i],
                 'command': command_list[i],
-                'v_info': v_info_list[i]
+                'v_info': v_info_list[i],
+                'sha256': FFmpegUtil.cal_sample_sha256(file_path),
+                'running_output_path': running_output_path_list[i],
             })
         return task_queue
 

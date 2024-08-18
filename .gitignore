@@ -1,0 +1,11 @@
+.ipynb_checkpoints
+/running_output
+/.idea
+/__pycache__
+bar.py
+*.xlsx
+config.ini
+*.ipynb
+multi_ff.py
+*.db
+*.txt

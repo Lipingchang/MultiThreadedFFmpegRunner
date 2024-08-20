@@ -78,20 +78,28 @@ class FFmpegManager(TerminalOutput, FFmpegUtil):
             self.move_cursor(self.bar_start_line, 1)
             sys.stdout.flush()
 
-    @staticmethod
-    def enqueue_output(out, q, print_to_area, thread_name, output_file_path):
+    # @staticmethod
+    def enqueue_output(self, out, q, print_to_area, thread_name, output_file_path):
         mypid = os.getpid()
         t_name = threading.current_thread().name
         print_to_area(f'✅ start thread {t_name},{thread_name}, pid:{mypid}')
-        with open(output_file_path, 'w') as f:
-            for line in out:
-                q.append(line)
-                result = FFmpegUtil.match_ffmpeg_running_output(line)
-                if result is not None:
-                    [frame, fps, size, ttime, bitrate, speed] = result
-                    f.write(".")
-                else:
-                    f.write(line)
+        with open(output_file_path, 'wb') as f:
+            try:
+                for line in out:
+                    q.append(line)
+                    result = FFmpegUtil.match_ffmpeg_running_output(line)
+                    if result is not None:
+                        # [frame, fps, size, ttime, bitrate, speed] = result
+                        f.write(bytes(".", "utf-8"))
+                    else:
+                        f.write(bytes(line, "utf-8"))
+            except Exception as e:
+                print_to_area(f'处理子进程输出线程发生错误:{thread_name}', color='red')
+                TerminalOutput.move_cursor(self.print_buff_size + self.print_start_line + 3, 0)
+                traceback.print_exc()
+                TerminalOutput.move_cursor(self.bar_start_line, 0)
+
+
         out.close()
         print_to_area(f'⛔ end thread {t_name},{thread_name}, pid:{mypid}')
 
@@ -121,6 +129,9 @@ class FFmpegManager(TerminalOutput, FFmpegUtil):
                     if process_info["process"] is None:
                         try:
                             task = ready_task_queue.get(block=False)
+                            # 每个像素占用了多少比特流
+                            bit_per_pixel = int(task["v_info"]["video_bit_rate"]) / \
+                                             (int(task["v_info"]["video_width"]) * int(task["v_info"]["video_height"]))
                             # 检查 sha256 在数据库中 是否出现 运行成功。
                             [vfile_id, vfile_name ] = db.check_success_sha256(conn, task['sha256'])
                             if vfile_id is not None:
@@ -129,6 +140,12 @@ class FFmpegManager(TerminalOutput, FFmpegUtil):
                                     color="red"
                                 )
                                 db.insert_Repeat_File_Log(conn, task, vfile_id)
+                                continue
+                            elif bit_per_pixel < 1: # 说明原文件就很糊了
+                                self.print_to_area(
+                                    f"原文件已经很糊了 参数为:{bit_per_pixel} 文件:{task['file_path']}",
+                                    color="red"
+                                )
                                 continue
                             else:
                                 self.print_to_area(f"开始处理文件:{task['file_path']}", color='green')

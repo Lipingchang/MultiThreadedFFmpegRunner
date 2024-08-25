@@ -82,12 +82,12 @@ class FFmpegUtil:
             "file_path": input_file_path,
             "duration": jsonobj['format']['duration'],
             "size": jsonobj['format']['size'],
-            "encoder": jsonobj['format']['tags'].get('encoder', None),
+            "encoder": jsonobj['format'].get('tags', {'encoder': 'no tag found'}).get('encoder', None),
             "video_codec": video_stream['codec_name'],
             "video_width": video_stream['width'],
             "video_height": video_stream['height'],
             "video_pix_fmt": video_stream['pix_fmt'],
-            "video_bit_rate": video_stream['bit_rate'],
+            "video_bit_rate": video_stream.get('bit_rate', int(jsonobj['format']['bit_rate'])-int(audio_stream['bit_rate']) ),
             "video_fps": fps,
             "audio_codec": audio_stream['codec_name'],
             "audio_sample_rate": audio_stream['sample_rate'],
@@ -127,48 +127,34 @@ class FFmpegUtil:
             return 0
 
     @staticmethod
-    def ffmpeg_video_to_av1_task_queue_init(file_path_list, output_dir, global_quality, running_output_dir):
+    def ffmpeg_video_to_av1_task_queue_init(file_path_list, output_dir, global_quality, running_output_dir,print_to_area):
         # file_path_list = [x['file_path'] for x in file_path_sha256_list]
         # file_sha256_list = [x['sha256'] for x in file_path_sha256_list]
 
         # 初始化ffmpeg任务队列
-        # 每一个原视频文件生成一条转换格式的 cmd命令
-        v_info_list = [
-            FFmpegUtil.ffmpeg_video_info(x)
-            for x in file_path_list
-        ]  # 视频文件信息 列表
-        duration_list = [
-            int(float(v_info['duration']))
-            for v_info in v_info_list
-        ]  # 视频文件时长 列表
-        dstfile_path_list = [
-            FFmpegUtil.filepath_to_av1(file_path, output_dir, global_quality)
-            for file_path in file_path_list
-        ]  # 转码后 输出视频文件的路径 列表
-        command_list = [[
-            'ffmpeg',
-            '-hide_banner',
-            '-i', file_path_list[i],
-            '-c:v', 'hevc_qsv', '-preset', 'fast', '-global_quality', str(global_quality),
-            '-look_ahead', '1', '-c:a', 'copy',
-            dstfile_path_list[i], '-y'
-        ] for i in range(len(file_path_list))] # ffmepg命令列表
-        running_output_path_list = [
-            os.path.join(running_output_dir, f"{os.path.basename(p)}_{time.time()}.txt")
-            for p in dstfile_path_list
-        ]
-
         task_queue = queue.Queue()  # 任务队列
         for i, file_path in enumerate(file_path_list):
+            v_info = FFmpegUtil.ffmpeg_video_info(file_path)  # 视频文件信息 列表
+            dstfile_path = FFmpegUtil.filepath_to_av1(file_path, output_dir, global_quality) # 转码后 输出视频文件的路径 列表
+            cmd = [
+                'ffmpeg',
+                '-hide_banner',
+                '-i', file_path_list[i],
+                '-c:v', 'hevc_qsv', '-preset', 'fast', '-global_quality', str(global_quality),
+                '-look_ahead', '1', '-c:a', 'copy',
+                dstfile_path, '-y'
+            ]
             task_queue.put({
                 'file_path': file_path,
-                'duration': duration_list[i],
-                'dstfile_path': dstfile_path_list[i],
-                'command': command_list[i],
-                'v_info': v_info_list[i],
+                'duration': v_info['duration'], # 视频文件时长 列表
+                'dstfile_path':  dstfile_path,
+                'command': cmd,
+                'v_info': v_info,
                 'sha256': FFmpegUtil.cal_sample_sha256(file_path),
-                'running_output_path': running_output_path_list[i],
+                'running_output_path': os.path.join(running_output_dir, f"{os.path.basename(file_path)}_{time.time()}.txt"),
             })
+            print_to_area(f"👌 加入任务队列:{file_path}")
+
         return task_queue
 
     @staticmethod
@@ -193,7 +179,7 @@ class FFmpegUtil:
 
     @staticmethod
     def load_video_from_dir(dir_path):
-        video_extensions = ['mp4', 'avi', 'mkv', 'mov', 'wmv', 'flv', 'webm']
+        video_extensions = ['mp4', 'avi', 'mkv', 'mov', 'wmv', 'flv', 'webm', 'mpg', 'ts']
         video_files = []
         for file_path in os.listdir(dir_path):
             base_n = os.path.basename(file_path)

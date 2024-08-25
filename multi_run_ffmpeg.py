@@ -106,7 +106,8 @@ class FFmpegManager(TerminalOutput, FFmpegUtil):
     def run(self, db, file_path_list, output_dir, running_output_dir, global_quality=24, ):
         conn = db.get_conn()
         ready_task_queue = FFmpegUtil.ffmpeg_video_to_av1_task_queue_init(
-            file_path_list, output_dir, global_quality, running_output_dir
+            file_path_list, output_dir, global_quality, running_output_dir,
+            self.print_to_area
         )
         running_process_list = [None] * self.max_processes
         done_process_list = []
@@ -133,22 +134,21 @@ class FFmpegManager(TerminalOutput, FFmpegUtil):
                             bit_per_pixel = int(task["v_info"]["video_bit_rate"]) / \
                                              (int(task["v_info"]["video_width"]) * int(task["v_info"]["video_height"]))
                             # 检查 sha256 在数据库中 是否出现 运行成功。
-                            [vfile_id, vfile_name ] = db.check_success_sha256(conn, task['sha256'])
+                            [vfile_id, vfile_name, record_id ] = db.check_success_sha256(conn, task['sha256'])
                             if vfile_id is not None:
-                                self.print_to_area(
-                                    f"文件sha256在库中已出现,且执行成功: {task['file_path']}->video_file_id:{vfile_id}: {vfile_name}",
-                                    color="red"
-                                )
-                                db.insert_Repeat_File_Log(conn, task, vfile_id)
+                                pass_reason = f"文件sha256在库中已出现,且执行成功: {task['file_path']}->video_file_id:{vfile_id}: {vfile_name}, run taskid: {record_id}"
+                                self.print_to_area(pass_reason,color="red")
+                                db.insert_ByPass_File_Log(conn, task, vfile_id, pass_reason)
                                 continue
                             elif bit_per_pixel < 1: # 说明原文件就很糊了
-                                self.print_to_area(
-                                    f"原文件已经很糊了 参数为:{bit_per_pixel} 文件:{task['file_path']}",
-                                    color="red"
-                                )
+                                pass_reason = f"原文件已经很糊了 bit_per_pixel为:{bit_per_pixel} 文件:{task['file_path']}, path:{task['file_path']}"
+                                self.print_to_area(f"👀👀👀{pass_reason}",color="red")
+                                vfile_id = db.insert_video_file_state(conn, task)
+                                db.insert_ByPass_File_Log(conn, task, vfile_id, pass_reason)
                                 continue
                             else:
                                 self.print_to_area(f"开始处理文件:{task['file_path']}", color='green')
+
                             process = subprocess.Popen(
                                 task['command'], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                 universal_newlines=True, encoding='utf8',
@@ -164,7 +164,7 @@ class FFmpegManager(TerminalOutput, FFmpegUtil):
                             t.daemon = True  # 设置为守护线程，使其在主线程结束时自动退出
                             t.start()
                             with self.print_lock:
-                                running_process_list[i]["pbar"].total = task['duration']  # 设置进度条最大长度
+                                running_process_list[i]["pbar"].total = int(float(task['duration']))  # 设置进度条最大长度
                                 running_process_list[i]["pbar"].n = 0
                             running_process_list[i]["process"] = process
                             running_process_list[i]["output"] = output_queue
@@ -193,7 +193,7 @@ class FFmpegManager(TerminalOutput, FFmpegUtil):
                             pbar.set_postfix_str(f"bitrate:{bitrate},speed:{speed}")
                             process_info['output_has_error'] = False # 能匹配上 说明程序正常运行
                         elif "error" in last_line.lower() or 'missing' in last_line.lower():
-                            self.print_to_area(f'error in output:[{last_line}]', color='red')
+                            self.print_to_area(f'😡 error in output:[{last_line}]', color='red')
                             process_info['output_has_error'] = True # 说明程序出错了
                         else:
                             # self.print_to_area(f'cant process last_line:[{last_line}]', color='red')

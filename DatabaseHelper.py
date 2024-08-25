@@ -4,6 +4,32 @@ from configparser import ConfigParser
 import logging, os, re, time
 import sqlite3
 from FFmpegUtil import FFmpegUtil
+import functools
+
+
+def retry_on_database_locked(retries=3, delay=1):
+    """
+    装饰器，用于处理数据库操作时，数据库被锁的情况。
+    如果数据库被锁，则重试指定的次数，每次重试间隔delay秒。
+    """
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            attempt = 0
+            while attempt < retries:
+                try:
+                    return func(*args, **kwargs)
+                except sqlite3.OperationalError as e:
+                    if 'database is locked' in str(e):
+                        attempt += 1
+                        if attempt < retries:
+                            time.sleep(delay)  # 等待一段时间后重试
+                        else:
+                            raise  # 超过重试次数后抛出异常
+                    else:
+                        raise  # 其他类型的 OperationalError 直接抛出
+        return wrapper
+    return decorator
 
 
 class MyDB:
@@ -33,7 +59,7 @@ class MyDB:
         # 需要保存啥？
         # 1. Run_Task_Record 运行过的 任务列表 + 运行结果
         # 2. Video_File_State 文件名称 + video 信息， 用于补充 run task 的输入文件的信息·
-        # 3. Repeat_File_Log  因为重复 而没有加入 video_file_state 的文件 没啥用？
+        # 3. ByPass_File_Log  用于记录 执行中 因为各种原因 不执行的 task
 
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS "Video_File_State" (
@@ -71,14 +97,15 @@ class MyDB:
         ''')
 
         cursor.execute(f'''
-            CREATE TABLE IF NOT EXISTS "Repeat_File_Log" (
+            CREATE TABLE IF NOT EXISTS "ByPass_File_Log" (
                 id INTEGER PRIMARY KEY autoincrement, -- '主键',
                 file_name TEXT,                   -- '文件名称',
                 file_path TEXT,                   -- '文件全路径',
                 file_size INTEGER,                -- '文件大小',
                 file_sample_sha256 TEXT,          -- '文件sha256简单版本！',
-                create_task_time INTEGER,           -- 发现文件重复时间
-                last_video_file_id INTEGER            -- 外键 video_file_state 的id
+                create_task_time INTEGER,           -- log时间
+                last_video_file_id INTEGER,            -- 外键 video_file_state 的id
+                pass_reason TEXT                     -- 略过文件理由
             )
         ''')
 
@@ -88,21 +115,22 @@ class MyDB:
         conn.close()
 
     @staticmethod
-    def insert_Repeat_File_Log(conn, task, vfile_id):
+    def insert_ByPass_File_Log(conn, task, vfile_id, pass_reason):
         cursor = conn.cursor()
         cursor.execute(f'''
-            insert into "Repeat_File_Log" (
+            insert into "ByPass_File_Log" (
                 file_name,                
                 file_size,                
                 file_path,                
                 file_sample_sha256,       
                 create_task_time,
-                last_video_file_id
+                last_video_file_id,
+                pass_reason
             ) values (
-                ?,?,?,?,?,?
+                ?,?,?,?,?,?,?
             )
         ''', (os.path.basename(task['file_path']), task['v_info']['size'],
-              task['file_path'], task['sha256'], int(time.time()), vfile_id))
+              task['file_path'], task['sha256'], int(time.time()), vfile_id, pass_reason))
         conn.commit()
 
     def check_same_sha256(self, conn, sha256_str):
@@ -120,7 +148,7 @@ class MyDB:
         # 返回执行成功的 sha256 相同  的记录
         cursor = conn.cursor()
         cursor.execute('''
-            select vv.id, vv.file_name from "Video_File_State" vv
+            select vv.id, vv.file_name,rr.id from "Video_File_State" vv
             left join "Run_Task_Record" rr on vv.id=rr.video_file_id
             where  vv.file_sample_sha256=?
                 and rr.output_has_error=False
@@ -130,10 +158,9 @@ class MyDB:
         if len(rows) > 0:
             return rows[0]
         else:
-            return [None,None]
+            return [None,None,None ]
 
-
-
+    @retry_on_database_locked()
     def insert_video_file_state(self, conn, info_and_sha256):
         """
         1. 每次运行task时  会记录运行的cmd 就会附带上 运行的文件信息 file state
@@ -207,6 +234,7 @@ class MyDB:
             where  id=? 
         ''', (has_error, int(time.time()), out_vfile_id, run_record_id ))
         conn.commit()
+
 
 
 def my_print(*args, color='black'):

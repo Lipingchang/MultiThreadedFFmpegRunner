@@ -78,6 +78,7 @@ class FFmpegUtil:
         audio_stream = audio_stream[0]
         [a, b] = video_stream['avg_frame_rate'].split('/')
         fps = int(a) // int(b)
+        audio_bitrate = int(audio_stream.get('bit_rate',0))
         return {
             "file_path": input_file_path,
             "duration": jsonobj['format']['duration'],
@@ -87,11 +88,12 @@ class FFmpegUtil:
             "video_width": video_stream['width'],
             "video_height": video_stream['height'],
             "video_pix_fmt": video_stream['pix_fmt'],
-            "video_bit_rate": video_stream.get('bit_rate', int(jsonobj['format']['bit_rate'])-int(audio_stream['bit_rate']) ),
+            "video_bit_rate": video_stream.get(
+                'bit_rate',int(jsonobj['format'].get('bit_rate',0))- audio_bitrate),
             "video_fps": fps,
             "audio_codec": audio_stream['codec_name'],
             "audio_sample_rate": audio_stream['sample_rate'],
-            "audio_bit_rate": audio_stream['bit_rate']
+            "audio_bit_rate": audio_bitrate
         }
 
     @staticmethod
@@ -134,6 +136,7 @@ class FFmpegUtil:
         # 初始化ffmpeg任务队列
         task_queue = queue.Queue()  # 任务队列
         for i, file_path in enumerate(file_path_list):
+            print_to_area(f"loading:{file_path}")
             v_info = FFmpegUtil.ffmpeg_video_info(file_path)  # 视频文件信息 列表
             dstfile_path = FFmpegUtil.filepath_to_av1(file_path, output_dir, global_quality) # 转码后 输出视频文件的路径 列表
             cmd = [

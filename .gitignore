@@ -9,3 +9,6 @@ config.ini
 multi_ff.py
 *.db
 *.txt
+/build
+/dist
+*/.streamlit

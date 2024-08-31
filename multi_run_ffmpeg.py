@@ -1,11 +1,7 @@
 import configparser
-import shutil
-import ffmpeg
-import re
 import subprocess
 import sys
 import time
-import pandas as pd
 import os
 import json
 from datetime import datetime
@@ -14,7 +10,6 @@ from tqdm import tqdm
 import queue
 import threading
 import traceback
-import pandas
 from FFmpegUtil import FFmpegUtil
 from TerminalOutput import TerminalOutput
 from DatabaseHelper import MyDB
@@ -104,26 +99,27 @@ class FFmpegManager(TerminalOutput, FFmpegUtil):
         print_to_area(f'⛔ end thread {t_name},{thread_name}, pid:{mypid}')
 
     def run(self, db, file_path_list, output_dir, running_output_dir, global_quality=24, ):
-        conn = db.get_conn()
-        ready_task_queue = FFmpegUtil.ffmpeg_video_to_av1_task_queue_init(
-            file_path_list, output_dir, global_quality, running_output_dir,
-            self.print_to_area
-        )
-        running_process_list = [None] * self.max_processes
-        done_process_list = []
-
-        with self.print_lock:
-            for i in range(self.max_processes):  # 初始化进度条 和 进程信息
-                running_process_list[i] = {
-                    "process": None,
-                    "output": None,
-                    "pbar": tqdm(total=100, bar_format=self.custom_bar_format, position=i),
-                    "task": None,
-                    "output_has_error": False, # 每次从消息队列中 取出ffmpeg进程的输出时 判断下文本是否包含错误的关键字
-                    "run_record_id": None,      # 在任务开始运行后 数据库记录下开始运行的时间点 返回 记录的id 后续运行结束的结果 也存回这个id
-                }
-
         try:
+            conn = db.get_conn()
+            ready_task_queue = FFmpegUtil.ffmpeg_video_to_av1_task_queue_init(
+                file_path_list, output_dir, global_quality, running_output_dir,
+                self.print_to_area
+            )
+            running_process_list = [None] * self.max_processes
+            done_process_list = []
+
+            with self.print_lock:
+                for i in range(self.max_processes):  # 初始化进度条 和 进程信息
+                    running_process_list[i] = {
+                        "process": None,
+                        "output": None,
+                        "pbar": tqdm(total=100, bar_format=self.custom_bar_format, position=i),
+                        "task": None,
+                        "output_has_error": False, # 每次从消息队列中 取出ffmpeg进程的输出时 判断下文本是否包含错误的关键字
+                        "run_record_id": None,      # 在任务开始运行后 数据库记录下开始运行的时间点 返回 记录的id 后续运行结束的结果 也存回这个id
+                    }
+
+
             while True:
                 # 1. 检查running里面有没有 None, 安排ready task 进入
                 for i, process_info in enumerate(running_process_list):
@@ -294,3 +290,4 @@ if __name__ == "__main__":
         manager.max_processes + manager.print_buff_size + 5,
         1
     )
+    a = input("")

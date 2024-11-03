@@ -137,7 +137,12 @@ class FFmpegUtil:
         task_queue = queue.Queue()  # 任务队列
         for i, file_path in enumerate(file_path_list):
             print_to_area(f"loading:{file_path}")
-            v_info = FFmpegUtil.ffmpeg_video_info(file_path)  # 视频文件信息 列表
+            try:
+                v_info = FFmpegUtil.ffmpeg_video_info(file_path)  # 视频文件信息 列表
+            except Exception as e: # ffprobe 解析出错
+                print_to_area(f"😱load error :{e}", color='red')
+                continue
+
             dstfile_path = FFmpegUtil.filepath_to_av1(file_path, output_dir, global_quality) # 转码后 输出视频文件的路径 列表
             cmd = [
                 'ffmpeg',

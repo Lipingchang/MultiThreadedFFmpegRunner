@@ -46,7 +46,7 @@ with (conn.session as s):
             left join Video_File_State input_video on record.video_file_id=input_video.id 
             left join Video_File_State output_video on record.output_video_file_id=output_video.id
             {query_str}
-            order by record.end_running_time desc 
+            order by record.end_running_time desc
         '''), {
             'output_has_error': has_error
         })
@@ -72,6 +72,7 @@ with (conn.session as s):
     bypass_df = get_not_sha_bypass_list().groupby(by='start_running_date_str', as_index=False).agg({'file_name': 'count'})
     bypass_df['task_result'] = 'bypass'
     df = pd.concat([success_df,fail_df,bypass_df])
+    df = df.sort_values(by='start_running_date_str', ascending=False)   # 日期 降序
 
     custom_colors = ['#1f77b4', '#d62728', '#2ca02c', '#ff7f0e', '#9467bd', '#8c564b']
 
@@ -91,7 +92,7 @@ with (conn.session as s):
         color='task_result:N',
     )
     bars_with_text = (bars_chart+text_chart).facet(
-        column=alt.Column('start_running_date_str:N',title="开始运行日期")
+        column=alt.Column('start_running_date_str:N',title="开始运行日期",  sort=alt.SortOrder("descending"))
     )
     st.altair_chart(
         bars_with_text

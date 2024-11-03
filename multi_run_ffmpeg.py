@@ -78,22 +78,36 @@ class FFmpegManager(TerminalOutput, FFmpegUtil):
         mypid = os.getpid()
         t_name = threading.current_thread().name
         print_to_area(f'✅ start thread {t_name},{thread_name}, pid:{mypid}')
+        buffer = b""    # 不使用python自带的对stream的decode 有些bytes不能用utf8解码
         with open(output_file_path, 'wb') as f:
             try:
-                for line in out:
-                    q.append(line)
-                    result = FFmpegUtil.match_ffmpeg_running_output(line)
-                    if result is not None:
-                        # [frame, fps, size, ttime, bitrate, speed] = result
-                        f.write(bytes(".", "utf-8"))
-                    else:
-                        f.write(bytes(line, "utf-8"))
+
+                while True:
+                    chunk = out.read(10)
+                    if not chunk:
+                        break
+
+                    buffer += chunk
+                    while b"\n" in buffer or b"\r" in buffer:
+                        if b"\n" in buffer:
+                            line, buffer = buffer.split(b"\n", 1)    # 按照\n分割
+                        elif b"\r" in buffer:
+                            line, buffer = buffer.split(b"\r", 1)
+
+                        decoded_line = line.decode("utf-8", errors="replace")  # 用?顶替错误的
+                        q.append(decoded_line)
+                        result = FFmpegUtil.match_ffmpeg_running_output(decoded_line)
+                        # print_to_area(f'{decoded_line}')
+                        if result is not None:
+                            # [frame, fps, size, ttime, bitrate, speed] = result
+                            f.write(bytes(".", "utf-8"))
+                        else:
+                            f.write(bytes(decoded_line, "utf-8"))
             except Exception as e:
                 print_to_area(f'处理子进程输出线程发生错误:{thread_name}', color='red')
                 TerminalOutput.move_cursor(self.print_buff_size + self.print_start_line + 3, 0)
                 traceback.print_exc()
                 TerminalOutput.move_cursor(self.bar_start_line, 0)
-
 
         out.close()
         print_to_area(f'⛔ end thread {t_name},{thread_name}, pid:{mypid}')
@@ -147,7 +161,8 @@ class FFmpegManager(TerminalOutput, FFmpegUtil):
 
                             process = subprocess.Popen(
                                 task['command'], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                universal_newlines=True, encoding='utf8',
+                                text=False,
+                                # universal_newlines=True, encoding='utf8',
                                 shell=True
                             )  # shell = True 时运行 process是shell进程 ffmpeg是shell的子进程 kill时 会让ffmpeg继续运行
                             output_queue = deque(maxlen=500)  # 创建输出队列和线程

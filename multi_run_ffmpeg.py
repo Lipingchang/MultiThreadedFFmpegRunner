@@ -3,6 +3,7 @@ import subprocess
 import sys
 import time
 import os
+import re
 import json
 from datetime import datetime
 from collections import deque
@@ -21,10 +22,10 @@ class FFmpegManager(TerminalOutput, FFmpegUtil):
     def __init__(self, max_processes=1, print_buff_size=22):
         self.max_processes = max_processes
         self.print_buff_size = print_buff_size
-        TerminalOutput.check_terminal_size(120, print_buff_size + max_processes + 5)
+        TerminalOutput.check_terminal_size(120, print_buff_size + max_processes + 7)
         self.myprint_buff = deque(maxlen=print_buff_size)
         self.bar_start_line = 2  # 进度条输出的行号
-        self.print_start_line = 3 + max_processes  # print输出的行号
+        self.print_start_line = self.bar_start_line + max_processes + 2 # print 日志输出的行号 有一行是总进度
         self.init_output_area()
         # 同一时间只能有一个线程 向终端中输出（调用print）
         # 要同步三个：主线程会print  tqdm会print  子线程会print
@@ -49,9 +50,7 @@ class FFmpegManager(TerminalOutput, FFmpegUtil):
             w = os.get_terminal_size().columns
             # 合并args参数为一个字符串 超出行的字符串裁剪去 并补上两个点
             str_args = [str(aa) for aa in args]
-            print_text = " ".join(str_args).replace('\n', '\\n')
-            if len(print_text) > w - 5:
-                print_text = print_text[:w - 7] + '..'
+            print_text = " ".join(str_args)
             if len(self.myprint_buff) >= self.print_buff_size:
                 self.myprint_buff.popleft()
             self.myprint_buff.append({'t': print_text, 'c': color})
@@ -67,11 +66,18 @@ class FFmpegManager(TerminalOutput, FFmpegUtil):
                     sys.stdout.write("\033[31m")
                 if c == 'green':
                     sys.stdout.write("\033[32m")
-                sys.stdout.write(f"[{i + 1}]: {self.myprint_buff[i]['t']}\n")
+
+                print_text = self.myprint_buff[i]['t']
+                print_text = print_text.replace('\n', ' ')
+                print_text = print_text.replace('\r', ' ')
+                print_text = f"[{i + 1}]: {print_text}\n"
+                print_text = TerminalOutput.truncate_string_by_width(print_text,w)
+                sys.stdout.write(print_text)
                 sys.stdout.write('\033[0m')
 
             self.move_cursor(self.bar_start_line, 1)
             sys.stdout.flush()
+            self.move_cursor(self.bar_start_line, 1)
 
     # @staticmethod
     def enqueue_output(self, out, q, print_to_area, thread_name, output_file_path):
@@ -119,6 +125,8 @@ class FFmpegManager(TerminalOutput, FFmpegUtil):
                 file_path_list, output_dir, global_quality, running_output_dir,
                 self.print_to_area
             )
+            process_count_pbar = None
+            done_skip_task_count = 0
             running_process_list = [None] * self.max_processes
             done_process_list = []
 
@@ -132,7 +140,9 @@ class FFmpegManager(TerminalOutput, FFmpegUtil):
                         "output_has_error": False, # 每次从消息队列中 取出ffmpeg进程的输出时 判断下文本是否包含错误的关键字
                         "run_record_id": None,      # 在任务开始运行后 数据库记录下开始运行的时间点 返回 记录的id 后续运行结束的结果 也存回这个id
                     }
-
+                process_count_pbar = tqdm(total=ready_task_queue.qsize(),
+                                          bar_format=self.custom_bar_format,
+                                          position=self.max_processes)
 
             while True:
                 # 1. 检查running里面有没有 None, 安排ready task 进入
@@ -149,12 +159,14 @@ class FFmpegManager(TerminalOutput, FFmpegUtil):
                                 pass_reason = f"文件sha256在库中已出现,且执行成功: {task['file_path']}->video_file_id:{vfile_id}: {vfile_name}, run taskid: {record_id}"
                                 self.print_to_area(pass_reason,color="red")
                                 db.insert_ByPass_File_Log(conn, task, vfile_id, pass_reason)
+                                done_skip_task_count += 1
                                 continue
                             elif bit_per_pixel < 1: # 说明原文件就很糊了
                                 pass_reason = f"原文件已经很糊了 bit_per_pixel为:{bit_per_pixel} 文件:{task['file_path']}, path:{task['file_path']}"
                                 self.print_to_area(f"👀👀👀{pass_reason}",color="red")
                                 vfile_id = db.insert_video_file_state(conn, task)
                                 db.insert_ByPass_File_Log(conn, task, vfile_id, pass_reason)
+                                done_skip_task_count += 1
                                 continue
                             else:
                                 self.print_to_area(f"开始处理文件:{task['file_path']}", color='green')
@@ -217,6 +229,9 @@ class FFmpegManager(TerminalOutput, FFmpegUtil):
                     for i, process_info in enumerate(running_process_list):
                         pbar = process_info['pbar']
                         pbar.refresh()
+                    process_count_pbar.set_description_str("已经完成的任务个数")
+                    process_count_pbar.n = done_skip_task_count
+                    process_count_pbar.refresh()
 
                 # 4. 检查进程状态, 运行完毕的 放入done中 把running置 None
                 for i, process_info in enumerate(running_process_list):
@@ -224,6 +239,8 @@ class FFmpegManager(TerminalOutput, FFmpegUtil):
                         continue
                     retcode = process_info['process'].poll()
                     if retcode is not None:
+                        done_skip_task_count += 1
+
                         out_vfile_id = None
                         if process_info["output_has_error"] == False: # 运行中 没有发生错误: 获取并记录 输出视频的 基本信息
                             output_video_path = process_info['task']['dstfile_path']
@@ -302,7 +319,7 @@ if __name__ == "__main__":
 
     manager.run(db, video_file_list, video_out_path, running_output_dir, quality )
     TerminalOutput.move_cursor(
-        manager.max_processes + manager.print_buff_size + 5,
+        manager.max_processes + manager.print_buff_size + 6,
         1
     )
     a = input("")

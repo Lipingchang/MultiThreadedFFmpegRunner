@@ -1,6 +1,6 @@
 import os
 import sys
-
+import re
 
 class TerminalOutput:
     # 命令行终端操作
@@ -40,3 +40,31 @@ class TerminalOutput:
         else:
             t = f"Current terminal size ({h}x{w}) does not meet requirements: {min_h}x{min_w}"
             raise ValueError(t)
+
+
+    @staticmethod
+    def get_display_width(s):
+        # 计算字符串的显示宽度
+        one_char_width = re.findall(r'[A-Za-z0-9\u0020-\u007F]', s)  # 英文字符、数字和常见标点
+        one_char_count = len(one_char_width)
+        # 其他字符默认占用 2 个字符宽度
+        total_width = one_char_count + 2 * (len(s) - one_char_count)
+        return total_width
+
+    @staticmethod
+    def truncate_string_by_width(s, l):
+        # 如果字符串的宽度小于或等于 l，直接返回原字符串
+        if TerminalOutput.get_display_width(s) <= l:
+            return s
+
+        # 否则，逐个字符检查，直到达到指定宽度
+        result = []
+        current_width = 0
+        for char in s:
+            char_width = 2 if re.match(r'[^A-Za-z0-9\u0020-\u007F]', char) else 1  # 判断字符是否为非ASCII字符
+            if current_width + char_width > l-3:
+                break
+            result.append(char)
+            current_width += char_width
+
+        return ''.join(result) + ".."
